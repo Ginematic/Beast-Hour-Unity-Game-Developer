@@ -23,8 +23,8 @@ public class PlayerMirror : NetworkBehaviour
     [SyncVar] public float dashTime = 0.25f; // время рывка зафиксировано
     [SyncVar] public float dashDistance = 5; // именно эта переменная должна отображаться в инспекторе, быть изменяемой и влиять на скорость рывка
     [SyncVar] public float dashCooldownTime = 4f;
-    public bool isDashReady = true;
-    private bool isDashActive = false;
+    [SyncVar] public bool isDashReady = true;
+    [SyncVar] public bool isDashActive = false;
 
     //public Material opponentSkinMaterial;
     public MeshRenderer playerHeadMaterial;
@@ -33,7 +33,7 @@ public class PlayerMirror : NetworkBehaviour
 
     [Header("Stats")]
     [SyncVar] public string playerName;
-    [SyncVar(hook="MyHook")] public int fragPoints = 0;
+    [SyncVar] public int fragPoints = 0;
     public TextMesh scoreBar;
 
     private void Start() // делаем на старте а не на awake
@@ -47,12 +47,13 @@ public class PlayerMirror : NetworkBehaviour
             //playerCamera = this.transform.GetChild(1).gameObject;
             playerCamera.SetActive(true);
             abilityImage1.fillAmount = 0;
+            CmdSetPlayerName(PlayerManager.Instance.getPlayerNameBuffer());
         }
         if (isServer) // если сервер
         {
             playerSpeed = 6f; // выставляем единую скорость
             invulnerabilityTimeAfterTakingDamage = 3f;
-            CmdSetPlayerName(PlayerManager.Instance.getPlayerNameBuffer());
+            
         }
     }
 
@@ -78,47 +79,95 @@ public class PlayerMirror : NetworkBehaviour
         transform.localRotation = Quaternion.Euler(0, axis.x, 0); // вращаем игрока и камеру по оси Х
     }
 
-    public IEnumerator applyDash()
+    
+    public IEnumerator CmdApplyDash()
     {
-        isDashReady = false;
+        ToggleIsDashReady();
         float startChargeTime = Time.time;
-        isDashActive = true;
+        ToggleIsDashActive();
         while (Time.time < startChargeTime + dashTime)
         {
             playerController.Move(moveDirection * (dashDistance / dashTime) * Time.deltaTime);
             yield return null;
         }
-        isDashActive = false;
+        ToggleIsDashActive();
         yield return new WaitForSeconds(dashCooldownTime);
-        isDashReady = true;
+        ToggleIsDashReady();
+    }
+
+    [Command]
+    void ToggleIsDashActive()
+    {
+        isDashActive = !isDashActive;
+    }
+
+    [Command]
+    void ToggleIsDashReady()
+    {
+        isDashReady = !isDashReady;
     }
 
     private void OnControllerColliderHit(ControllerColliderHit hitObject)
     {
-        Debug.Log("OnControllerColliderHit");
-        if (hitObject.gameObject.tag == "Player" && isDashActive)
+        if (!(hitObject.gameObject.tag == "Player" && isDashActive))
         {
-            Debug.Log("if (hitObject.gameObject.tag == Player && isDashActive)");
-            if (hitObject.gameObject.GetComponent<PlayerMirror>().playerHeadMaterial.sharedMaterial != PlayerManager.Instance.damagedHeadMaterial)
-            {
-                Debug.Log("++fragPoints;");
-                ++fragPoints;
-                StartCoroutine(paintDamagedPlayer(hitObject.gameObject.GetComponent<PlayerMirror>().playerHeadMaterial));
-                if (fragPoints >= CustomNetworkManager.Instance.victoryConditionPoints) // считаем количество победных очков
-                {
-                    Debug.Log("StartCoroutine victoryAndGameReset");
-                    StartCoroutine(victoryAndGameReset(playerName));
-                    
-                    //StartCoroutine(CustomNetworkManager.Instance.victoryAndGameReset());
-                }
-            }
+            return;
         }
+
+        if (!(hitObject.gameObject.GetComponent<PlayerMirror>().playerHeadMaterial.sharedMaterial != PlayerManager.Instance.damagedHeadMaterial))
+        {
+            return;
+        }
+        
+        CmdFragPointsIncrease();
+        if (!isServer)
+            FragPointsIncrease();
+        StartCoroutine(paintDamagedPlayer(hitObject.gameObject.GetComponent<PlayerMirror>().playerHeadMaterial));
+        Debug.Log("fragPoints = " + fragPoints + "/" + CustomNetworkManager.Instance.victoryConditionPoints);
+        if (!(fragPoints >= CustomNetworkManager.Instance.victoryConditionPoints)) // считаем количество победных очков
+        {
+            return;
+        }
+        Victory(playerName);
     }
 
-    private void MyHook(int oldValue, int newValue)
+    [Command]
+    public void Victory(string scoredPlayerName)
     {
-        Debug.Log("Hook Called: OldValue=" + oldValue + "  NewValue=" + newValue);
-        fragPoints = newValue;  //I understand why this shouldn't set dirty bit, because it would cause infinite looping
+        Debug.Log("Victory(" + scoredPlayerName + ")");
+        StartCoroutine(ShowPlayerAndWait(scoredPlayerName));
+        fragPoints = 0;
+    }
+
+    private IEnumerator ShowPlayerAndWait(string name)
+    {
+        Debug.Log("ShowPlayerAndWait(" + name + ")");
+        RpcTagToggle(name);
+        yield return new WaitForSeconds(CustomNetworkManager.Instance.secondsUntilMatchRestarts);
+        RpcTagToggle("");
+    }
+
+    [ClientRpc]
+    public void RpcTagToggle(string name)
+    {
+        Debug.Log("Victory of <" + name + "> player!");
+        UIManager.Instance.playerTagField.text = name;
+        UIManager.Instance.playerTagToggle();
+        //fragPoints = 0;
+    }
+
+
+    [Command]
+    void CmdFragPointsIncrease()
+    {
+        ++fragPoints;
+        Debug.Log("Command FragPointsIncrease fragPoints = " + fragPoints);
+    }
+
+    void FragPointsIncrease()
+    {
+        ++fragPoints;
+        Debug.Log("FragPointsIncrease fragPoints = " + fragPoints);
     }
 
     private IEnumerator paintDamagedPlayer(MeshRenderer mesh)
@@ -133,25 +182,4 @@ public class PlayerMirror : NetworkBehaviour
     {
         playerName = name;
     }
-
-    [ClientRpc]
-    public void RpcTagToggle(string name)
-    {
-        Debug.Log("Victory of <" + name + "> player!");
-        UIManager.Instance.playerTagField.text = name;
-        UIManager.Instance.playerTagToggle();
-        fragPoints = 0;
-    }
-
-    
-    private IEnumerator victoryAndGameReset(string name)
-    {
-        
-        RpcTagToggle(name);
-        yield return new WaitForSeconds(CustomNetworkManager.Instance.secondsUntilMatchRestarts);
-        RpcTagToggle("");
-        int rand = Random.Range(0, 3);
-        this.transform.Translate(CustomNetworkManager.Instance.spawnPoints.transform.GetChild(rand).transform.position);
-    }
-
 }

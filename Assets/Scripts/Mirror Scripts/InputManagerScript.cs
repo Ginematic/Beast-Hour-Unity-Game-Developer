@@ -38,7 +38,7 @@ public class InputManagerScript : MonoBehaviour
             MouseLookInput();
             if (Input.GetMouseButtonDown(0) && playerObj.isDashReady)
             {
-                StartCoroutine(playerObj.applyDash());
+                StartCoroutine(playerObj.CmdApplyDash());
                 playerObj.abilityImage1.fillAmount = 1;
             }
             if (!playerObj.isDashReady)

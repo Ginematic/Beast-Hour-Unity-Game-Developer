@@ -37,6 +37,9 @@ public class PlayerManager : MonoBehaviour
             Debug.LogError("No name for player!");
             return;
         }
+
+        
+
         if (!netManager.GetClientLoadedScene())
         {
             //Debug.Log("Client Loaded Scene");
